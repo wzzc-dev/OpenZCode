@@ -219,8 +219,9 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release delete "$tag" --yes --cleanup-tag=false
           fi
-          # 数组传参：产物文件名含空格（ZCode Preview-<version>-..._TEST.dmg），
-          # 直接展开通配符会被 shell 拆词。
+          # 数组传参：artifactName 里的 ${productName} 会被 electron-builder 净化成
+          # ZCode.Preview（appInfo.js 的 sanitizeFileName），但文件名仍可能含分隔符，
+          # 直接展开通配符有被 shell 拆词的风险。
           assets=()
           for file in release-assets/*; do
             assets+=("$file")

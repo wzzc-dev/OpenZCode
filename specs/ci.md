@@ -104,7 +104,9 @@ electron-builder 自身在 `app-builder-lib/out/targets/FpmTarget.js:255` 与 `:
 
 1. `actions/download-artifact@v4` 按 `pattern: desktop-*` 把三个平台的 artifact 下载到 `artifacts/<artifact-name>/`。
 2. 只把安装包扩展名（`dmg`、`zip`、`exe`、`AppImage`、`deb`、`rpm`、`zst`）的文件复制进 `release-assets/`。**`builder-debug.yml` 留在 workflow artifact 里不进 Release**：它是构建过程诊断，不是交付物，且三个平台同名会互相覆盖。
-3. `gh release create "$tag" --target "$GITHUB_SHA" --generate-notes` 创建 Release，附件经 bash 数组传入，保证 `ZCode Preview-..._TEST.dmg` 这类含空格的文件名不被 shell 拆词。
+3. `gh release create "$tag" --target "$GITHUB_SHA" --generate-notes` 创建 Release，附件经 bash 数组传入而不是直接展开通配符，避免被 shell 拆词。
+
+**产物文件名的实际形态**：`artifactName` 里的 `${productName}` 会被 electron-builder 净化——`app-builder-lib/out/appInfo.js:55` 对 `productName` 调 `sanitizeFileName`，`ZCode Preview` 变成 `ZCode.Preview`，所以真实文件名是 `ZCode.Preview-3.14.0-mac-arm64_TEST.dmg`，**不含空格**。spec 与 workflow 都不应假设文件名里有空格；附件筛选按扩展名做，与该细节无关。
 
 **权限边界**：workflow 顶层 `permissions: contents: read`，只有 `release` job 提升为 `contents: write`。三个打包 job 不需要任何写权限，无法改动远端仓库状态。
 
@@ -159,7 +161,7 @@ electron-builder 自身在 `app-builder-lib/out/targets/FpmTarget.js:255` 与 `:
 
 在干净工作区按 CI 相同的环境变量实跑 `pnpm bundle:desktop -- --os mac --arch arm64`（macOS arm64 宿主）：
 
-- 产物：`ZCode Preview-3.14.0-mac-arm64_TEST.dmg`（177 MiB）与同名 `.zip`（169 MiB），附带 `.blockmap`、`builder-debug.yml`、`latest-mac.yml`，全部落在 `packages/desktop/dist-macos-arm64/`，由 `.gitignore:6` 覆盖。
+- 产物：`ZCode.Preview-3.14.0-mac-arm64_TEST.dmg`（177 MiB，`${productName}` 经 `sanitizeFileName` 净化成 `ZCode.Preview`）与同名 `.zip`（169 MiB），附带 `.blockmap`、`builder-debug.yml`、`latest-mac.yml`，全部落在 `packages/desktop/dist-macos-arm64/`，由 `.gitignore:6` 覆盖。
 - 体积审计：`.zip` 169.0 MiB，上限 500 MiB，通过。
 - 签名：日志为 `skipped macOS code signing  reason=identity explicitly is set to null`，与未开启 `ZCODE_ENABLE_MAC_SIGN` 的预期一致。
 - 门禁：`pnpm typecheck`、`pnpm lint`（70 warnings / 0 errors）、`pnpm architecture:check`（全量与 `--changed` 两种语义）均通过。
@@ -177,10 +179,29 @@ Linux 主机工具链在 `docker run --platform linux/amd64 ubuntu:24.04` 容器
 - `linux-x64` 出 3 个工具（`bfs`、`ugrep`、`ripgrep`），`win32-x64` 出 2 个（Windows 不出 `bfs`），`linux-arm64` 出 3 个；全部归档文件存在，SHA-256 与 `apps/zcode-cli/dependencies/native-search/SHA256SUMS` 逐项一致。
 - `ripgrep` 走 `NATIVE_SEARCH_OFFICIAL_RIPGREP_ASSETS`（`scripts/native-search-tools-config.mjs:111`），Linux 用的是 **musl** 归档（`x86_64-unknown-linux-musl`），不是 glibc；`bfs`/`ugrep` 走 producer 归档（gnu）。`prepare:native-search` 因此完全离线可跑。
 
-**未验证项**（如实记录）：
+三平台端到端在 GitHub Actions 上实跑通过（run `35586940292`，tag `v3.14.0`，commit `bd97a9d`，2026-09-21）：
 
-- Windows runner 未实测。本机无法运行 Windows 容器，`windows-latest` 上的 `pnpm install`、NSIS 工具链下载、`patch-nsis-install-section.mjs` 对 `node_modules` 内模板的修补与还原都只在 macOS 宿主上做过静态核对。
-- 三平台全量 `pnpm bundle:desktop` 未在 GitHub runner 上跑过（首次运行需推 `v*` tag 或 `workflow_dispatch`）。已验证的是宿主工具链层（Linux）与打包脚本的入口/参数解析路径，不是端到端。
+| Job                   | 耗时    | 结果   |
+| --------------------- | ------- | ------ |
+| `verify`              | 1m28s   | success |
+| `package-macos-arm64` | 8m58s   | success |
+| `package-win-x64`     | 11m35s  | success |
+| `package-linux-x64`   | 14m07s  | success |
+| `release`             | 31s     | success |
+
+三平台并行，总墙钟 15m12s，三个打包 job 都在 90 分钟超时之内。Release 附件 7 个，全部低于 500 MiB 体积上限：
+
+| 平台  | 产物                                                        | 体积    |
+| ----- | ----------------------------------------------------------- | ------- |
+| mac   | `ZCode.Preview-3.14.0-mac-arm64_TEST.dmg` / `.zip`          | 177 / 168 MiB |
+| win   | `ZCode.Preview-3.14.0-win-x64_TEST.exe`                     | 142 MiB |
+| linux | `.AppImage` / `.deb` / `.pkg.tar.zst` / `.rpm`              | 181 / 133 / 117 / 111 MiB |
+
+- 这同时验证了 Linux 的 apt 前置依赖组合（`binutils`/`rpm`/`xz-utils`/`libarchive-tools`/`zstd`/`dpkg-dev`/`fakeroot`）在 `ubuntu-24.04` runner 上足够，四个格式全部产出。
+- Windows runner 上的 `pnpm install --frozen-lockfile`、NSIS 工具链下载、`patch-nsis-install-section.mjs` 对 `node_modules` 内模板的修补与进程退出后的还原都实际跑通。
+- `builder-debug.yml` 留在 workflow artifact 未进 Release，与「不发布的内容」一致；`*.blockmap`、`latest-*.yml`、`*-unpacked/` 均未出现在 Release 中。
+
+**仍未验证**：三个安装包在真实用户机上安装并启动（CI 只跑到 electron-builder 产出与 `bundle.mjs` 的机械校验；macOS 的签名/公证按设计关闭，Windows 未签名）。
 
 ## 与本地开发的边界
 
