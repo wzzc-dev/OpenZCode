@@ -1,23 +1,14 @@
 name: Repository setup and install
 
 description: >-
-  Checkout, resolve the pinned toolchain, warm caches and install dependencies.
+  Resolve the pinned toolchain, warm caches and install dependencies.
   Used by the verify and packaging jobs so the toolchain contract has one owner.
-
-inputs:
-  fetch-depth:
-    description: Git history depth for the checkout.
-    required: false
-    default: "1"
+  The workflow must run actions/checkout itself before calling this action: GitHub reads
+  this file to expand the action, so a checkout inside it can never execute.
 
 runs:
   using: composite
   steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: ${{ inputs.fetch-depth }}
-
     - name: Resolve toolchain from mise.toml
       id: toolchain
       shell: bash

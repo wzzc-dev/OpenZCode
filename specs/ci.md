@@ -18,6 +18,10 @@
 
 打包 workflow 自带 `verify` 前置 job，门禁不依赖 `ci.yml` 的执行结果，避免「PR 门禁绿了但 tag 打包跳过检查」的分叉路径。
 
+工具链解析、缓存与依赖安装的唯一所有者是 `.github/actions/setup-repo`。**它不包含 `actions/checkout`**，checkout 必须由调用它的 job 自己先执行。GitHub 在展开 local composite action 之前就要读取它的 `action.yml`，此时工作区尚未 checkout，把 checkout 放在 action 内部会直接报 `Can't find 'action.yml' ... Did you forget to run actions/checkout before running your local action?`，且该 step 永远没有执行机会。这是平台约束而非风格选择，无法通过调整 step 顺序消除；相应地 `fetch-depth` 由 job 层的 checkout 决定，action 不再暴露该输入。
+
+打包 workflow 的 `verify` job 是 reusable workflow 引用，`ci.yml` 内部自带 checkout，因此调用方无需重复。
+
 ## 工具链
 
 版本以 `mise.toml` 为唯一事实来源，workflow 不得自行硬编码另一套版本：

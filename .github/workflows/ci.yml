@@ -21,6 +21,12 @@ jobs:
     env:
       COREPACK_ENABLE_PROJECT_SPEC: "0"
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 架构检查走全量语义、构建元数据只读 HEAD，不需要完整历史。
+          fetch-depth: 1
+
       - name: Setup repository
         uses: ./.github/actions/setup-repo
 
