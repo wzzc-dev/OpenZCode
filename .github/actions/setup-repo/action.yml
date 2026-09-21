@@ -1,0 +1,80 @@
+name: Repository setup and install
+
+description: >-
+  Checkout, resolve the pinned toolchain, warm caches and install dependencies.
+  Used by the verify and packaging jobs so the toolchain contract has one owner.
+
+inputs:
+  fetch-depth:
+    description: Git history depth for the checkout.
+    required: false
+    default: "1"
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+
+    - name: Resolve toolchain from mise.toml
+      id: toolchain
+      shell: bash
+      run: |
+        node - <<'NODE' >> "$GITHUB_OUTPUT"
+        const { readFileSync } = require('node:fs');
+        const mise = readFileSync('mise.toml', 'utf8');
+        const pick = (key) => {
+          const match = mise.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm'));
+          if (!match) throw new Error(`mise.toml 缺少 ${key} 版本声明`);
+          return match[1];
+        };
+        console.log(`node-version=${pick('node')}`);
+        console.log(`pnpm-version=${pick('pnpm')}`);
+        NODE
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ steps.toolchain.outputs.node-version }}
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: ${{ steps.toolchain.outputs.pnpm-version }}
+        run_install: false
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: .pnpm-store
+        key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-
+
+    - name: Cache Electron runtime
+      uses: actions/cache@v4
+      with:
+        path: .electron-cache
+        key: ${{ runner.os }}-electron-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-electron-
+
+    - name: Cache electron-builder binaries
+      uses: actions/cache@v4
+      with:
+        path: .electron-builder-cache
+        key: ${{ runner.os }}-electron-builder-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-electron-builder-
+
+    - name: Point caches at workspace-local directories
+      shell: bash
+      run: |
+        pnpm config set store-dir "$PWD/.pnpm-store"
+        printf 'pnpm store-dir: %s\n' "$(pnpm store path)"
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

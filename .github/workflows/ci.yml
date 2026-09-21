@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint and architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COREPACK_ENABLE_PROJECT_SPEC: "0"
+    steps:
+      - name: Setup repository
+        uses: ./.github/actions/setup-repo
+
+      # 架构检查必须全量执行。--changed 比较的是工作区与 HEAD 的差异加未跟踪文件
+      # （scripts/architecture/index.mjs:317），CI checkout 是干净树，该集合恒为空，
+      # 会退化成空检查。全量语义与本地 pre-push 的 --changed 快速反馈不共享假设。
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Architecture check
+        run: pnpm architecture:check

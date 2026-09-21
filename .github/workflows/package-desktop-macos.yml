@@ -1,0 +1,57 @@
+name: Package Desktop macOS
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: package-desktop-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    uses: ./.github/workflows/ci.yml
+
+  package-macos-arm64:
+    name: macOS arm64
+    needs: verify
+    runs-on: macos-14
+    timeout-minutes: 60
+    env:
+      COREPACK_ENABLE_PROJECT_SPEC: "0"
+      ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache
+      ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.electron-builder-cache
+      ZCODE_TARGET_OS: mac
+      ZCODE_TARGET_ARCH: arm64
+      ZCODE_DESKTOP_DIST_DIR: dist-macos-arm64
+      ZCODE_SKIP_REMOTE_ASSETS: "1"
+      ZCODE_ENV: test
+    steps:
+      - name: Setup repository
+        uses: ./.github/actions/setup-repo
+
+      # 不拆解内部步骤：bundle.mjs 是打包链路的唯一所有者，已内建镜像 fallback、
+      # 瞬时网络失败重试，以及缺运行时依赖/越界 native 资源的 fail-closed 校验。
+      - name: Package
+        run: pnpm bundle:desktop -- --os mac --arch arm64
+
+      - name: List packaged artifacts
+        shell: bash
+        run: ls -lh "packages/desktop/${ZCODE_DESKTOP_DIST_DIR}"
+
+      - name: Upload Desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-arm64
+          path: |
+            packages/desktop/dist-macos-arm64/*.dmg
+            packages/desktop/dist-macos-arm64/*.zip
+            packages/desktop/dist-macos-arm64/builder-debug.yml
+          if-no-files-found: error
+          retention-days: 30
